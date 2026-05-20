@@ -1699,17 +1699,18 @@
                         <h4>💰 <span data-i18n="donate_amount">مبلغ کمک (دلار)</span></h4>
                         
                         <div class="amount-buttons">
-                            <button class="amount-btn selected" data-amount="10">$10</button>
+                            <button class="amount-btn selected" data-amount="5">$5</button>
+                            <button class="amount-btn" data-amount="10">$10</button>
                             <button class="amount-btn" data-amount="25">$25</button>
                             <button class="amount-btn" data-amount="50">$50</button>
                             <button class="amount-btn" data-amount="100">$100</button>
                         </div>
                         
                         <div class="custom-amount">
-                            <label data-i18n="donate_custom">یا مبلغ دلخواه (10 تا 100 دلار):</label>
+                            <label data-i18n="donate_custom">یا مبلغ دلخواه (5 تا 100 دلار):</label>
                             <div class="amount-input-wrapper">
                                 <span>$</span>
-                                <input type="number" id="customAmount" min="10" max="100" placeholder="10" value="10">
+                                <input type="number" id="customAmount" min="5" max="100" placeholder="5" value="5">
                             </div>
                         </div>
                         
@@ -1726,7 +1727,17 @@
                         
                         <div class="crypto-badge">
                             <img src="https://cryptologos.cc/logos/tether-usdt-logo.png" alt="USDT">
-                            <span>USDT (TRC20) - <span data-i18n="donate_fast">سریع و کم هزینه</span></span>
+                            <span>USDT - <span data-i18n="donate_fast">سریع و کم هزینه</span></span>
+                        </div>
+
+                        <!-- Network Selection -->
+                        <div style="margin-top: 15px;">
+                            <label style="color: var(--text-muted); font-size: 0.85rem; display: block; margin-bottom: 8px;" data-i18n="select_network">انتخاب شبکه:</label>
+                            <div class="amount-buttons" id="networkButtons">
+                                <button class="amount-btn selected" data-network="trc20" onclick="selectNetwork('trc20')">TRC20</button>
+                                <button class="amount-btn" data-network="bep20" onclick="selectNetwork('bep20')">BEP20</button>
+                                <button class="amount-btn" data-network="erc20" onclick="selectNetwork('erc20')">ERC20</button>
+                            </div>
                         </div>
 
                         <div style="text-align: center; margin-top: 20px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.1);">
@@ -1768,17 +1779,17 @@
             
             <div class="payment-header">
                 <h3 data-i18n="payment_title">پرداخت با USDT</h3>
-                <div class="payment-amount" id="modalAmount">$10</div>
+                <div class="payment-amount" id="modalAmount">$5</div>
             </div>
             
             <div class="payment-details">
                 <div class="payment-row">
                     <span class="label" data-i18n="payment_send">مقدار ارسال:</span>
-                    <span class="value" id="payAmount">10 USDT</span>
+                    <span class="value" id="payAmount">5 USDT</span>
                 </div>
                 <div class="payment-row">
                     <span class="label" data-i18n="payment_network">شبکه:</span>
-                    <span class="value">TRC20 (TRON)</span>
+                    <span class="value" id="payNetwork">TRC20 (TRON)</span>
                 </div>
                 <div class="payment-row">
                     <span class="label" data-i18n="payment_order">شماره سفارش:</span>
@@ -1796,7 +1807,7 @@
             
             <div class="payment-warning">
                 <strong data-i18n="payment_warning">⚠️ مهم:</strong>
-                <span data-i18n="payment_warning_text">فقط USDT روی شبکه TRC20 ارسال کنید. ارسال سایر ارزها باعث از دست رفتن دارایی می‌شود.</span>
+                <span id="payWarningText" data-i18n="payment_warning_text">فقط USDT روی شبکه TRC20 ارسال کنید. ارسال سایر ارزها باعث از دست رفتن دارایی می‌شود.</span>
             </div>
         </div>
     </div>
@@ -1873,7 +1884,7 @@
                 donate_coffee: 'یک قهوه مهمان کنید!',
                 donate_desc: 'این API کاملاً رایگان است. اگر برایتان مفید بود، می‌توانید از توسعه آن حمایت کنید.',
                 donate_amount: 'مبلغ کمک (دلار)',
-                donate_custom: 'یا مبلغ دلخواه (10 تا 100 دلار):',
+                donate_custom: 'یا مبلغ دلخواه (5 تا 100 دلار):',
                 donate_name_ph: 'نام شما (اختیاری)',
                 donate_email_ph: 'ایمیل (اختیاری)',
                 donate_message_ph: 'پیام شما (اختیاری)',
@@ -1891,9 +1902,10 @@
                 payment_address: 'آدرس کیف پول:',
                 payment_copy: 'کپی آدرس',
                 payment_warning: '⚠️ مهم:',
-                payment_warning_text: 'فقط USDT روی شبکه TRC20 ارسال کنید. ارسال سایر ارزها باعث از دست رفتن دارایی می‌شود.',
+                payment_warning_text: 'فقط USDT روی شبکه انتخابی ارسال کنید. ارسال سایر ارزها باعث از دست رفتن دارایی می‌شود.',
+                select_network: 'انتخاب شبکه:',
                 copied: 'کپی شد!',
-                error_amount: 'مبلغ باید بین 1 تا 100 دلار باشد',
+                error_amount: 'مبلغ باید بین 5 تا 100 دلار باشد',
                 error_payment: 'خطا در ایجاد پرداخت'
             },
             en: {
@@ -1948,7 +1960,7 @@
                 donate_coffee: 'Buy us a coffee!',
                 donate_desc: 'This API is completely free. If you find it useful, you can support its development.',
                 donate_amount: 'Donation Amount (USD)',
-                donate_custom: 'Or enter custom amount (10 to 100 USD):',
+                donate_custom: 'Or enter custom amount (5 to 100 USD):',
                 donate_name_ph: 'Your name (optional)',
                 donate_email_ph: 'Email (optional)',
                 donate_message_ph: 'Your message (optional)',
@@ -1966,9 +1978,10 @@
                 payment_address: 'Wallet Address:',
                 payment_copy: 'Copy Address',
                 payment_warning: '⚠️ Important:',
-                payment_warning_text: 'Only send USDT on TRC20 network. Sending other currencies will result in loss of funds.',
+                payment_warning_text: 'Only send USDT on the selected network. Sending other currencies will result in loss of funds.',
+                select_network: 'Select network:',
                 copied: 'Copied!',
-                error_amount: 'Amount must be between 1 and 100 USD',
+                error_amount: 'Amount must be between 5 and 100 USD',
                 error_payment: 'Error creating payment'
             }
         };
@@ -2312,7 +2325,28 @@
 
         // ==================== DONATION FUNCTIONS ====================
         
-        let selectedAmount = 10;
+        let selectedAmount = 5;
+        let selectedNetwork = 'trc20';
+        
+        // Wallet addresses per network
+        const walletAddresses = {
+            trc20: 'TH1cqV6bmZcmtV3SWDtH1N1roCEcAGpB7V',
+            bep20: '0xD492E850a67346b96C1F6107CC06E3132aAEec9A',
+            erc20: '0xD492E850a67346b96C1F6107CC06E3132aAEec9A'
+        };
+        
+        const networkNames = {
+            trc20: 'TRC20 (TRON)',
+            bep20: 'BEP20 (BNB Smart Chain)',
+            erc20: 'ERC20 (Ethereum)'
+        };
+        
+        function selectNetwork(network) {
+            selectedNetwork = network;
+            document.querySelectorAll('#networkButtons .amount-btn').forEach(btn => {
+                btn.classList.toggle('selected', btn.dataset.network === network);
+            });
+        }
         
         // Amount button click handlers
         document.querySelectorAll('.amount-btn').forEach(btn => {
@@ -2327,7 +2361,7 @@
         // Custom amount input handler
         document.getElementById('customAmount').addEventListener('input', (e) => {
             const value = parseInt(e.target.value);
-            if (value >= 1 && value <= 100) {
+            if (value >= 5 && value <= 100) {
                 selectedAmount = value;
                 document.querySelectorAll('.amount-btn').forEach(btn => {
                     btn.classList.toggle('selected', parseInt(btn.dataset.amount) === value);
@@ -2374,7 +2408,7 @@
             const donorMessage = document.getElementById('donorMessage').value.trim();
             
             // Validate amount
-            if (amount < 10 || amount > 100) {
+            if (amount < 5 || amount > 100) {
                 showToast(translations[currentLang].error_amount, 'error');
                 return;
             }
@@ -2389,6 +2423,7 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         amount,
+                        network: selectedNetwork,
                         donor_name: donorName || 'Anonymous',
                         donor_email: donorEmail,
                         message: donorMessage
@@ -2413,10 +2448,24 @@
         
         // Show payment modal
         function showPaymentModal(data) {
-            document.getElementById('modalAmount').textContent = `$${data.pay_amount}`;
-            document.getElementById('payAmount').textContent = `${data.pay_amount} USDT`;
+            const amount = data.pay_amount || selectedAmount;
+            const address = walletAddresses[selectedNetwork];
+            const network = networkNames[selectedNetwork];
+            
+            document.getElementById('modalAmount').textContent = `$${amount}`;
+            document.getElementById('payAmount').textContent = `${amount} USDT`;
+            document.getElementById('payNetwork').textContent = network;
             document.getElementById('orderId').textContent = data.order_id;
-            document.getElementById('payAddress').textContent = data.pay_address;
+            document.getElementById('payAddress').textContent = data.pay_address || address;
+            
+            // Update warning text based on network
+            const warningEl = document.getElementById('payWarningText');
+            if (currentLang === 'fa') {
+                warningEl.textContent = `فقط USDT روی شبکه ${network} ارسال کنید. ارسال سایر ارزها باعث از دست رفتن دارایی می‌شود.`;
+            } else {
+                warningEl.textContent = `Only send USDT on ${network} network. Sending other currencies will result in loss of funds.`;
+            }
+            
             document.getElementById('paymentModal').classList.add('active');
             document.body.style.overflow = 'hidden';
         }

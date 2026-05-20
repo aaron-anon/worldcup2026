@@ -686,9 +686,21 @@ This project is licensed under the ISC License — see the [LICENSE](LICENSE) fi
 
 ---
 
-## � Support This Project
+## 💝 Support This Project
 
 This API is completely **free and open-source**. If you find it useful, consider supporting its development:
+
+### 💰 Donate with USDT
+
+| Network | Address | Min Amount |
+|---------|---------|------------|
+| **TRC20** (TRON) | `TH1cqV6bmZcmtV3SWDtH1N1roCEcAGpB7V` | 1 USDT |
+| **BEP20** (BNB Smart Chain) | `0xD492E850a67346b96C1F6107CC06E3132aAEec9A` | 1 USDT |
+| **ERC20** (Ethereum) | `0xD492E850a67346b96C1F6107CC06E3132aAEec9A` | 1 USDT |
+
+> ⚠️ **Important:** Only send **USDT** on the correct network. Sending other assets will result in permanent loss.
+
+### Or via NOWPayments:
 
 <a href="https://nowpayments.io/donation?api_key=ebc9f078-46a5-413b-a28e-8b4737ec4d18" target="_blank" rel="noreferrer noopener">
    <img src="https://nowpayments.io/images/embeds/donation-button-black.svg" alt="Crypto donation button by NOWPayments">

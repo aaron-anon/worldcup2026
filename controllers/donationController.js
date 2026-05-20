@@ -8,6 +8,19 @@ const NOWPAYMENTS_IPN_SECRET = process.env.NOWPAYMENTS_IPN_SECRET;
 const NOWPAYMENTS_API = 'https://api.nowpayments.io/v1';
 const DONATION_WALLET = process.env.DONATION_WALLET_ADDRESS;
 
+// Wallet addresses per network
+const WALLET_ADDRESSES = {
+    trc20: 'TH1cqV6bmZcmtV3SWDtH1N1roCEcAGpB7V',
+    bep20: '0xD492E850a67346b96C1F6107CC06E3132aAEec9A',
+    erc20: '0xD492E850a67346b96C1F6107CC06E3132aAEec9A'
+};
+
+const NETWORK_CURRENCIES = {
+    trc20: 'usdttrc20',
+    bep20: 'usdtbsc',
+    erc20: 'usdterc20'
+};
+
 // Check if running in development/sandbox mode
 const IS_DEV = process.env.NODE_ENV !== 'production';
 
@@ -98,16 +111,21 @@ module.exports = (app) => {
      */
     app.post('/donate/create', async (req, res) => {
         try {
-            const { amount, donor_name, donor_email, message } = req.body;
+            const { amount, network, donor_name, donor_email, message } = req.body;
             
             // Validate amount
             const amountNum = parseFloat(amount);
-            if (isNaN(amountNum) || amountNum < 10 || amountNum > 100) {
+            if (isNaN(amountNum) || amountNum < 5 || amountNum > 100) {
                 return res.status(400).json({
                     success: false,
-                    error: 'Amount must be between 10 and 100 USD'
+                    error: 'Amount must be between 5 and 100 USD'
                 });
             }
+            
+            // Validate and resolve network
+            const selectedNetwork = ['trc20', 'bep20', 'erc20'].includes(network) ? network : 'trc20';
+            const walletAddress = WALLET_ADDRESSES[selectedNetwork];
+            const payCurrency = NETWORK_CURRENCIES[selectedNetwork];
             
             const orderId = generateOrderId();
             
@@ -123,9 +141,9 @@ module.exports = (app) => {
                     donor_email: donor_email,
                     donor_message: message,
                     amount_usd: amountNum,
-                    pay_currency: 'usdttrc20',
+                    pay_currency: payCurrency,
                     pay_amount: amountNum,
-                    pay_address: DONATION_WALLET,
+                    pay_address: walletAddress,
                     status: 'waiting'
                 });
                 
@@ -134,9 +152,9 @@ module.exports = (app) => {
                 return res.json({
                     success: true,
                     payment_id: donation.payment_id,
-                    pay_address: DONATION_WALLET,
+                    pay_address: walletAddress,
                     pay_amount: amountNum,
-                    pay_currency: 'usdttrc20',
+                    pay_currency: payCurrency,
                     order_id: orderId,
                     expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(), // 1 hour
                     demo_mode: true
@@ -149,7 +167,7 @@ module.exports = (app) => {
                 {
                     price_amount: amountNum,
                     price_currency: 'usd',
-                    pay_currency: 'usdttrc20',
+                    pay_currency: payCurrency,
                     order_id: orderId,
                     order_description: `Donation to FIFA World Cup 2026 Project - $${amountNum}`,
                     ipn_callback_url: `${req.protocol}://${req.get('host')}/donate/ipn`,
