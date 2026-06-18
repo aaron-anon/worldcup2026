@@ -2,7 +2,7 @@ const https = require('https');
 const { MongoClient } = require('mongodb');
 
 const MONGO_URL = process.env.MONGODB_URL;
-const DB_NAME = 'worldcup';
+const DB_NAME = (MONGO_URL || '').match(/\/([^/?]+)(\?|$)/)?.[1] || 'worldcup2026';
 const POLL_INTERVAL = 15_000;
 const SOURCE_API = 'https://worldcup26.ir/get/games';
 
