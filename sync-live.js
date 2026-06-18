@@ -85,14 +85,18 @@ async function syncGames() {
   }
 }
 
-async function main() {
+async function startSync() {
   await connect();
   await syncGames();
   setInterval(syncGames, POLL_INTERVAL);
   console.log(`Sync running every ${POLL_INTERVAL / 1000}s`);
 }
 
-main().catch(err => {
-  console.error('Fatal error:', err);
-  process.exit(1);
-});
+if (require.main === module) {
+  startSync().catch(err => {
+    console.error('Fatal error:', err);
+    process.exit(1);
+  });
+}
+
+module.exports = { startSync };
