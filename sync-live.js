@@ -44,12 +44,31 @@ async function syncGames() {
       if (!existing) continue;
 
       const fields = {};
-      if (game.home_score !== undefined && game.home_score !== existing.home_score) fields.home_score = game.home_score;
-      if (game.away_score !== undefined && game.away_score !== existing.away_score) fields.away_score = game.away_score;
-      if (game.home_scorers !== undefined && game.home_scorers !== existing.home_scorers) fields.home_scorers = game.home_scorers;
-      if (game.away_scorers !== undefined && game.away_scorers !== existing.away_scorers) fields.away_scorers = game.away_scorers;
-      if (game.finished !== undefined && game.finished !== existing.finished) fields.finished = game.finished;
-      if (game.time_elapsed !== undefined && game.time_elapsed !== existing.time_elapsed) fields.time_elapsed = game.time_elapsed;
+
+      const sv = (v) => v === undefined || v === null ? undefined : String(v);
+      const svFinished = (v) => {
+        if (v === undefined || v === null) return undefined;
+        const s = String(v).toLowerCase();
+        return s === 'true' || s === '1' ? 'TRUE' : 'FALSE';
+      };
+
+      const hs = sv(game.home_score);
+      if (hs !== undefined && hs !== existing.home_score) fields.home_score = hs;
+
+      const as = sv(game.away_score);
+      if (as !== undefined && as !== existing.away_score) fields.away_score = as;
+
+      const hsc = sv(game.home_scorers);
+      if (hsc !== undefined && hsc !== existing.home_scorers) fields.home_scorers = hsc;
+
+      const asc = sv(game.away_scorers);
+      if (asc !== undefined && asc !== existing.away_scorers) fields.away_scorers = asc;
+
+      const fn = svFinished(game.finished);
+      if (fn !== undefined && fn !== existing.finished) fields.finished = fn;
+
+      const te = sv(game.time_elapsed);
+      if (te !== undefined && te !== existing.time_elapsed) fields.time_elapsed = te;
 
       if (Object.keys(fields).length > 0) {
         fields.updated_at = new Date();
