@@ -12,6 +12,11 @@ let teamsCache = null;
 let teamsCacheTime = 0;
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
+// Cache for games (dynamic data, short TTL)
+let gamesCache = null;
+let gamesCacheTime = 0;
+const GAMES_CACHE_TTL = 30 * 1000; // 30 seconds
+
 async function getTeamsMap() {
     const now = Date.now();
     if (teamsCache && (now - teamsCacheTime) < CACHE_TTL) {
@@ -340,6 +345,12 @@ router.get('/teams', async(req,res) => {
  */
 router.get('/games', async(req,res) => {
     try{
+        // Return cached games if still fresh
+        const now = Date.now();
+        if (gamesCache && (now - gamesCacheTime) < GAMES_CACHE_TTL) {
+            return res.send({games: gamesCache});
+        }
+
         // Use lean() for faster queries
         const games = await Game.find({}).lean();
 
@@ -360,6 +371,10 @@ router.get('/games', async(req,res) => {
             
             return game;
         });
+
+        // Update cache
+        gamesCache = gamesWithNames;
+        gamesCacheTime = now;
 
         return res.send({games: gamesWithNames});
     }catch(err){
