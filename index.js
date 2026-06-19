@@ -234,14 +234,3 @@ app.use((error, req, res, next) => {
 app.listen(PORT, () => {
     console.log(`Server started on port ${PORT}`);
 });
-
-// Start live sync worker in the same process (Railway free tier doesn't run worker process)
-if (process.env.MONGODB_URL) {
-  const { startSync } = require('./sync-live');
-  startSync().catch(err => {
-    console.error('❌ Live sync failed:', err.message);
-  });
-  console.log('📡 Live sync worker started');
-} else {
-  console.log('⚠️ MONGODB_URL not set, live sync disabled');
-}

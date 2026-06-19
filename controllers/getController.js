@@ -6,6 +6,7 @@ const Team = require('../models/team');
 const Game = require('../models/game');
 const Stadium = require('../models/stadium');
 const MatchTable = require('../models/matchTable');
+const { syncOnDemand } = require('../sync-live');
 
 // Cache for teams (static data)
 let teamsCache = null;
@@ -17,6 +18,23 @@ let gamesCache = null;
 let gamesCacheTime = 0;
 let gamesCacheCursor = null;
 const GAMES_CACHE_TTL = 30 * 1000; // 30 seconds
+
+function invalidateGamesCache() {
+    gamesCache = null;
+    gamesCacheTime = 0;
+    gamesCacheCursor = null;
+}
+
+async function syncGamesOnRequest() {
+    try {
+        const result = await syncOnDemand();
+        if (result.changed) {
+            invalidateGamesCache();
+        }
+    } catch (error) {
+        console.error('On-demand live sync failed:', error.message);
+    }
+}
 
 function encodeCursor(date, id = '') {
     return `${date.toISOString()}|${id}`;
@@ -407,6 +425,8 @@ router.get('/teams', async(req,res) => {
  */
 router.get('/games', async(req,res) => {
     try{
+        await syncGamesOnRequest();
+
         // Return cached games if still fresh
         const now = Date.now();
         if (gamesCache && (now - gamesCacheTime) < GAMES_CACHE_TTL) {
@@ -435,6 +455,8 @@ router.get('/games', async(req,res) => {
 
 router.get('/games/delta', async (req, res) => {
     try {
+        await syncGamesOnRequest();
+
         const decodedCursor = decodeCursor(req.query.since);
 
         if (!decodedCursor) {

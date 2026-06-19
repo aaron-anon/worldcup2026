@@ -13,11 +13,10 @@ const DATE_QUERY_MODE = (process.env.LIVE_SCORE_DATE_QUERY_MODE || 'comma').toLo
 const STATIC_QUERY = parseJSON(process.env.LIVE_SCORE_QUERY_JSON, {});
 const STATIC_HEADERS = parseJSON(process.env.LIVE_SCORE_HEADERS_JSON, {});
 
-const POLL_INTERVAL_MS = parseNumber(process.env.LIVE_SCORE_POLL_INTERVAL_MS, 60_000);
 const PRE_MATCH_WINDOW_MS = parseNumber(process.env.LIVE_SCORE_PREMATCH_WINDOW_MS, 15 * 60_000);
 const POST_MATCH_WINDOW_MS = parseNumber(process.env.LIVE_SCORE_POSTMATCH_WINDOW_MS, 4 * 60 * 60_000);
-const MAX_IDLE_SLEEP_MS = parseNumber(process.env.LIVE_SCORE_MAX_IDLE_SLEEP_MS, 30 * 60_000);
 const REQUEST_TIMEOUT_MS = parseNumber(process.env.LIVE_SCORE_REQUEST_TIMEOUT_MS, 15_000);
+const SYNC_COOLDOWN_MS = 60_000;
 
 const FIELD_PATHS = {
   id: process.env.LIVE_SCORE_FIELD_ID || 'id',
@@ -52,12 +51,10 @@ const STADIUM_UTC_OFFSETS = {
   '16': -7
 };
 
-if (!MONGO_URL) {
-  console.error('MONGODB_URL environment variable is required');
-  process.exit(1);
-}
-
 let client;
+let clientPromise = null;
+let inFlightSync = null;
+let lastSyncAt = 0;
 const TEAM_NAME_MAP = readJSON(path.join(__dirname, 'data', 'team-name-map.json'), {});
 const PLAYER_NAME_PATH = path.join(__dirname, 'data', 'player-names.json');
 let playerNameDb = readJSON(PLAYER_NAME_PATH, {});
@@ -86,12 +83,8 @@ function parseNumber(raw, fallback) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-function log(message) {
-  console.log(`[${new Date().toISOString()}] ${message}`);
-}
-
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
+function logError(message) {
+  console.error(`[${new Date().toISOString()}] ${message}`);
 }
 
 function parseKickoffUTC(game) {
@@ -412,7 +405,7 @@ async function fetchVarzesh3Matches(db) {
     try {
       allMatches.push(...await fetchVarzesh3(offset));
     } catch (error) {
-      log(`Varzesh3 fetch failed for offset ${offset}: ${error.message}`);
+      logError(`Varzesh3 fetch failed for offset ${offset}: ${error.message}`);
     }
   }
 
@@ -472,31 +465,33 @@ function buildGameUpdate(existingGame, providerMatch) {
   return update;
 }
 
-function getIdleDelayMs(nextGame) {
-  const kickoff = nextGame?.kickoffUTC || parseKickoffUTC(nextGame);
-
-  if (!kickoff) {
-    return MAX_IDLE_SLEEP_MS;
+async function getClient() {
+  if (client) {
+    return client;
   }
 
-  const nextUsefulWindow = kickoff.getTime() - PRE_MATCH_WINDOW_MS;
-  const delay = nextUsefulWindow - Date.now();
-
-  if (delay <= 0) {
-    return POLL_INTERVAL_MS;
+  if (!MONGO_URL) {
+    throw new Error('MONGODB_URL environment variable is required');
   }
 
-  return Math.min(Math.max(delay, POLL_INTERVAL_MS), MAX_IDLE_SLEEP_MS);
+  if (!clientPromise) {
+    clientPromise = (async () => {
+      const mongoClient = new MongoClient(MONGO_URL);
+      await mongoClient.connect();
+      client = mongoClient;
+      return mongoClient;
+    })().catch(error => {
+      clientPromise = null;
+      throw error;
+    });
+  }
+
+  return clientPromise;
 }
 
-async function connect() {
-  client = new MongoClient(MONGO_URL);
-  await client.connect();
-  log('Connected to MongoDB');
-}
-
-async function syncRelevantGames() {
-  const db = client.db(DB_NAME);
+async function performSyncPass() {
+  const mongoClient = await getClient();
+  const db = mongoClient.db(DB_NAME);
   const coll = db.collection('games');
   const now = Date.now();
 
@@ -523,22 +518,18 @@ async function syncRelevantGames() {
 
   const relevantGames = unfinishedGames.filter(game => isRelevantForSync(game, now));
 
-  const nextUpcomingGame = unfinishedGames
-    .map(game => ({ ...game, kickoffUTC: parseKickoffUTC(game) }))
-    .filter(game => game.kickoffUTC && game.kickoffUTC.getTime() > now)
-    .sort((a, b) => a.kickoffUTC.getTime() - b.kickoffUTC.getTime())[0];
-
   if (relevantGames.length === 0) {
-    const sleepMs = getIdleDelayMs(nextUpcomingGame);
-    log(`No useful live window, sleeping for ${Math.round(sleepMs / 1000)}s`);
-    return sleepMs;
+    return {
+      changed: false,
+      changedIds: [],
+      updatedCount: 0,
+      skipped: 'no_relevant_games'
+    };
   }
 
   let providerMatchesById;
   if (PROVIDER_URL) {
     const requestConfig = buildProviderRequestConfig(relevantGames);
-    log(`Polling provider for ${relevantGames.length} relevant games`);
-
     const response = await axios(requestConfig);
     const providerMatches = extractMatches(response.data)
       .map(normalizeProviderMatch)
@@ -546,7 +537,6 @@ async function syncRelevantGames() {
 
     providerMatchesById = new Map(providerMatches.map(match => [String(match.id), match]));
   } else {
-    log(`Polling Varzesh3 for ${relevantGames.length} relevant games`);
     const providerMatches = await fetchVarzesh3Matches(db);
     providerMatchesById = new Map(
       providerMatches.map(match => [`${match.home_team_id}:${match.away_team_id}`, match])
@@ -578,36 +568,52 @@ async function syncRelevantGames() {
 
   if (bulkOps.length > 0) {
     await coll.bulkWrite(bulkOps, { ordered: false });
-    log(`Updated ${bulkOps.length} live games: ${changedIds.join(', ')}`);
-  } else {
-    log(`Provider returned no changes for ${relevantGames.length} relevant games`);
   }
 
-  return POLL_INTERVAL_MS;
+  return {
+    changed: bulkOps.length > 0,
+    changedIds,
+    updatedCount: bulkOps.length,
+    skipped: null
+  };
 }
 
-async function runLoop() {
-  while (true) {
-    try {
-      const delayMs = await syncRelevantGames();
-      await sleep(delayMs);
-    } catch (error) {
-      log(`Live sync error: ${error.message}`);
-      await sleep(POLL_INTERVAL_MS);
-    }
+async function syncOnDemand() {
+  if (inFlightSync) {
+    return inFlightSync;
   }
-}
 
-async function startSync() {
-  await connect();
-  await runLoop();
+  if (Date.now() - lastSyncAt < SYNC_COOLDOWN_MS) {
+    return {
+      changed: false,
+      changedIds: [],
+      updatedCount: 0,
+      skipped: 'cooldown'
+    };
+  }
+
+  inFlightSync = (async () => {
+    const result = await performSyncPass();
+    lastSyncAt = Date.now();
+    return result;
+  })();
+
+  try {
+    return await inFlightSync;
+  } finally {
+    inFlightSync = null;
+  }
 }
 
 if (require.main === module) {
-  startSync().catch(error => {
+  syncOnDemand()
+    .then(() => {
+      process.exit(0);
+    })
+    .catch(error => {
     console.error('Fatal error:', error);
     process.exit(1);
-  });
+    });
 }
 
-module.exports = { startSync };
+module.exports = { syncOnDemand };
