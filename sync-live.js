@@ -1,5 +1,7 @@
 const axios = require('axios');
 const { MongoClient } = require('mongodb');
+const fs = require('fs');
+const path = require('path');
 
 const MONGO_URL = process.env.MONGODB_URL;
 const DB_NAME = (MONGO_URL || '').match(/\/([^/?]+)(\?|$)/)?.[1] || 'worldcup2026';
@@ -56,6 +58,9 @@ if (!MONGO_URL) {
 }
 
 let client;
+const TEAM_NAME_MAP = readJSON(path.join(__dirname, 'data', 'team-name-map.json'), {});
+const PLAYER_NAME_PATH = path.join(__dirname, 'data', 'player-names.json');
+let playerNameDb = readJSON(PLAYER_NAME_PATH, {});
 
 function parseJSON(raw, fallback) {
   if (!raw) return fallback;
@@ -64,6 +69,14 @@ function parseJSON(raw, fallback) {
     return JSON.parse(raw);
   } catch (error) {
     console.error(`Invalid JSON config: ${raw}`);
+    return fallback;
+  }
+}
+
+function readJSON(filePath, fallback) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch {
     return fallback;
   }
 }
@@ -218,6 +231,34 @@ function normalizeScorers(value) {
   return JSON.stringify(value);
 }
 
+function getPlayerName(id, fallbackName) {
+  const stringId = String(id || '');
+  if (stringId && playerNameDb[stringId]) {
+    return playerNameDb[stringId];
+  }
+
+  if (stringId && fallbackName && !playerNameDb[stringId]) {
+    playerNameDb[stringId] = fallbackName;
+    try {
+      fs.writeFileSync(PLAYER_NAME_PATH, JSON.stringify(playerNameDb, null, 2));
+    } catch {}
+  }
+
+  return fallbackName || 'Goal';
+}
+
+function mapVarzesh3Status(status, liveTime, isLive) {
+  if (isLive) {
+    return String(liveTime || 'Live');
+  }
+
+  if (status === 7) {
+    return 'finished';
+  }
+
+  return 'notstarted';
+}
+
 function extractMatches(payload) {
   const source = RESPONSE_PATH ? getByPath(payload, RESPONSE_PATH) : payload;
 
@@ -295,6 +336,116 @@ function buildProviderRequestConfig(relevantGames) {
   };
 }
 
+async function fetchVarzesh3(dayOffset) {
+  const url = dayOffset === 0
+    ? 'https://web-api.varzesh3.com/v2.0/livescore/today'
+    : `https://web-api.varzesh3.com/v2.0/livescore/${dayOffset}`;
+
+  const response = await fetch(url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+  const data = await response.json();
+  const matches = [];
+
+  for (const league of data) {
+    if (league.id !== 28) continue;
+    for (const dateGroup of league.dates || []) {
+      for (const match of dateGroup.matches || []) {
+        matches.push(match);
+      }
+    }
+  }
+
+  return matches;
+}
+
+async function fetchVarzesh3Scorers(matchId) {
+  try {
+    const response = await fetch(
+      `https://web-api.varzesh3.com/v2.0/livescore/football/matches/${matchId}/events`,
+      { signal: AbortSignal.timeout(5000) }
+    );
+    const events = await response.json();
+    const homeGoals = [];
+    const awayGoals = [];
+
+    for (const event of events) {
+      if (event.eventType !== 1 && event.eventType !== 3) continue;
+
+      const id = event.strikerId || event.kickerId || '';
+      const playerName = getPlayerName(id, event.strickerName || event.kickerName || 'Goal');
+      const minute = event.time || '';
+      const penalty = event.eventType === 3 ? '(p)' : '';
+      const rendered = `"${playerName} ${minute}'${penalty}"`;
+
+      if (event.side === 0) {
+        homeGoals.push(rendered);
+      } else if (event.side === 1) {
+        awayGoals.push(rendered);
+      }
+    }
+
+    return {
+      home_scorers: homeGoals.length ? `{${homeGoals.join(',')}}` : 'null',
+      away_scorers: awayGoals.length ? `{${awayGoals.join(',')}}` : 'null'
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function fetchVarzesh3Matches(db) {
+  const teams = await db.collection('teams').find({}, { projection: { id: 1, name_en: 1, name_fa: 1 } }).toArray();
+  const teamByFa = {};
+
+  for (const team of teams) {
+    teamByFa[team.name_fa] = team.id;
+  }
+
+  for (const [faName, enName] of Object.entries(TEAM_NAME_MAP)) {
+    const matchedTeam = teams.find(team => team.name_en === enName);
+    if (matchedTeam) {
+      teamByFa[faName] = matchedTeam.id;
+    }
+  }
+
+  const allMatches = [];
+  for (const offset of [-1, 0, 1]) {
+    try {
+      allMatches.push(...await fetchVarzesh3(offset));
+    } catch (error) {
+      log(`Varzesh3 fetch failed for offset ${offset}: ${error.message}`);
+    }
+  }
+
+  const normalized = [];
+  for (const match of allMatches) {
+    const homeTeamId = teamByFa[match.host?.name];
+    const awayTeamId = teamByFa[match.guest?.name];
+    if (!homeTeamId || !awayTeamId) continue;
+
+    const nextMatch = {
+      sourceMatchId: String(match.id || ''),
+      home_team_id: String(homeTeamId),
+      away_team_id: String(awayTeamId),
+      home_score: String(match.goals?.host ?? 0),
+      away_score: String(match.goals?.guest ?? 0),
+      time_elapsed: mapVarzesh3Status(match.status, match.liveTime, match.isLive),
+      finished: match.status === 7 ? 'TRUE' : 'FALSE'
+    };
+
+    if (match.isLive || match.status === 7) {
+      const scorers = await fetchVarzesh3Scorers(match.id);
+      if (scorers) {
+        nextMatch.home_scorers = scorers.home_scorers;
+        nextMatch.away_scorers = scorers.away_scorers;
+      }
+    }
+
+    normalized.push(nextMatch);
+  }
+
+  return normalized;
+}
+
 function buildGameUpdate(existingGame, providerMatch) {
   const fieldsToCompare = [
     'home_score',
@@ -345,11 +496,6 @@ async function connect() {
 }
 
 async function syncRelevantGames() {
-  if (!PROVIDER_URL) {
-    log('LIVE_SCORE_PROVIDER_URL is missing, live sync idle');
-    return MAX_IDLE_SLEEP_MS;
-  }
-
   const db = client.db(DB_NAME);
   const coll = db.collection('games');
   const now = Date.now();
@@ -388,20 +534,32 @@ async function syncRelevantGames() {
     return sleepMs;
   }
 
-  const requestConfig = buildProviderRequestConfig(relevantGames);
-  log(`Polling provider for ${relevantGames.length} relevant games`);
+  let providerMatchesById;
+  if (PROVIDER_URL) {
+    const requestConfig = buildProviderRequestConfig(relevantGames);
+    log(`Polling provider for ${relevantGames.length} relevant games`);
 
-  const response = await axios(requestConfig);
-  const providerMatches = extractMatches(response.data)
-    .map(normalizeProviderMatch)
-    .filter(Boolean);
+    const response = await axios(requestConfig);
+    const providerMatches = extractMatches(response.data)
+      .map(normalizeProviderMatch)
+      .filter(Boolean);
 
-  const providerMatchesById = new Map(providerMatches.map(match => [match.id, match]));
+    providerMatchesById = new Map(providerMatches.map(match => [String(match.id), match]));
+  } else {
+    log(`Polling Varzesh3 for ${relevantGames.length} relevant games`);
+    const providerMatches = await fetchVarzesh3Matches(db);
+    providerMatchesById = new Map(
+      providerMatches.map(match => [`${match.home_team_id}:${match.away_team_id}`, match])
+    );
+  }
+
   const bulkOps = [];
   const changedIds = [];
 
   for (const game of relevantGames) {
-    const providerMatch = providerMatchesById.get(String(game.id));
+    const providerMatch = PROVIDER_URL
+      ? providerMatchesById.get(String(game.id))
+      : providerMatchesById.get(`${game.home_team_id}:${game.away_team_id}`);
     if (!providerMatch) continue;
 
     const update = buildGameUpdate(game, providerMatch);
