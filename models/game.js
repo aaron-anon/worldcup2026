@@ -81,8 +81,14 @@ const GameSchema = new mongoose.Schema({
     createdAt: {
         type: Date,
         default: Date.now
+    },
+    updated_at: {
+        type: Date,
+        default: Date.now
     }
 });
+
+GameSchema.index({ updated_at: 1, id: 1 });
 
 const Game = mongoose.model('Game', GameSchema);
 

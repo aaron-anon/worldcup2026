@@ -147,7 +147,11 @@ router.put('/game/:idGame', async(req,res) => {
         if(!(AcessCodeDev==AcessCodeDevEnv)){
             return res.status(401).send({error: 'Unauthorized to edit game'});
         };
-        const game = await Game.findByIdAndUpdate(req.params.idGame, {...req.body}, {new:true});
+        const game = await Game.findByIdAndUpdate(
+            req.params.idGame,
+            {...req.body, updated_at: new Date()},
+            {new:true}
+        );
         
         return res.send({game});
     }catch(err){

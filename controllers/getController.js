@@ -15,7 +15,69 @@ const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 // Cache for games (dynamic data, short TTL)
 let gamesCache = null;
 let gamesCacheTime = 0;
+let gamesCacheCursor = null;
 const GAMES_CACHE_TTL = 30 * 1000; // 30 seconds
+
+function encodeCursor(date, id = '') {
+    return `${date.toISOString()}|${id}`;
+}
+
+function decodeCursor(rawCursor) {
+    if (!rawCursor || typeof rawCursor !== 'string') {
+        return null;
+    }
+
+    const separatorIndex = rawCursor.indexOf('|');
+    const timestamp = separatorIndex >= 0 ? rawCursor.slice(0, separatorIndex) : rawCursor;
+    const id = separatorIndex >= 0 ? rawCursor.slice(separatorIndex + 1) : '';
+    const date = new Date(timestamp);
+
+    if (Number.isNaN(date.getTime())) {
+        return null;
+    }
+
+    return { date, id };
+}
+
+function cursorForGames(games, fallbackDate = new Date()) {
+    if (!games.length) {
+        return encodeCursor(fallbackDate, '');
+    }
+
+    const sortedGames = [...games].sort((a, b) => {
+        const aTime = new Date(a.updated_at || fallbackDate).getTime();
+        const bTime = new Date(b.updated_at || fallbackDate).getTime();
+        if (aTime !== bTime) {
+            return aTime - bTime;
+        }
+        return String(a.id).localeCompare(String(b.id));
+    });
+
+    const lastGame = sortedGames[sortedGames.length - 1];
+    const lastUpdatedAt = new Date(lastGame.updated_at || fallbackDate);
+
+    return encodeCursor(lastUpdatedAt, String(lastGame.id || ''));
+}
+
+async function enrichGamesWithNames(games) {
+    const teamMap = await getTeamsMap();
+
+    return games.map(game => {
+        const enrichedGame = { ...game };
+
+        if (enrichedGame.home_team_id && teamMap[enrichedGame.home_team_id]) {
+            enrichedGame.home_team_name_en = teamMap[enrichedGame.home_team_id].name_en;
+            enrichedGame.home_team_name_fa = teamMap[enrichedGame.home_team_id].name_fa;
+        }
+
+        if (enrichedGame.away_team_id && teamMap[enrichedGame.away_team_id]) {
+            enrichedGame.away_team_name_en = teamMap[enrichedGame.away_team_id].name_en;
+            enrichedGame.away_team_name_fa = teamMap[enrichedGame.away_team_id].name_fa;
+        }
+
+        return enrichedGame;
+    });
+}
 
 async function getTeamsMap() {
     const now = Date.now();
@@ -348,40 +410,60 @@ router.get('/games', async(req,res) => {
         // Return cached games if still fresh
         const now = Date.now();
         if (gamesCache && (now - gamesCacheTime) < GAMES_CACHE_TTL) {
-            return res.send({games: gamesCache});
+            return res.send({
+                games: gamesCache,
+                nextCursor: gamesCacheCursor || encodeCursor(new Date(), '')
+            });
         }
 
-        // Use lean() for faster queries
-        const games = await Game.find({}).lean();
-
-        // Get team map from cache
-        const teamMap = await getTeamsMap();
-
-        // Add team names to games
-        const gamesWithNames = games.map(game => {
-            if(game.home_team_id && teamMap[game.home_team_id]) {
-                game.home_team_name_en = teamMap[game.home_team_id].name_en;
-                game.home_team_name_fa = teamMap[game.home_team_id].name_fa;
-            }
-            
-            if(game.away_team_id && teamMap[game.away_team_id]) {
-                game.away_team_name_en = teamMap[game.away_team_id].name_en;
-                game.away_team_name_fa = teamMap[game.away_team_id].name_fa;
-            }
-            
-            return game;
-        });
+        const games = await Game.find({}).sort({ date: 1, id: 1 }).lean();
+        const gamesWithNames = await enrichGamesWithNames(games);
+        const nextCursor = cursorForGames(games, new Date());
 
         // Update cache
         gamesCache = gamesWithNames;
         gamesCacheTime = now;
+        gamesCacheCursor = nextCursor;
 
-        return res.send({games: gamesWithNames});
+        return res.send({games: gamesWithNames, nextCursor});
     }catch(err){
         return res.status(400).send({
             error: 'Error getting all games'
         });
     };
+});
+
+router.get('/games/delta', async (req, res) => {
+    try {
+        const decodedCursor = decodeCursor(req.query.since);
+
+        if (!decodedCursor) {
+            return res.status(400).send({
+                error: 'Invalid or missing since cursor'
+            });
+        }
+
+        const changedGames = await Game.find({
+            $or: [
+                { updated_at: { $gt: decodedCursor.date } },
+                { updated_at: decodedCursor.date, id: { $gt: decodedCursor.id } }
+            ]
+        })
+            .sort({ updated_at: 1, id: 1 })
+            .limit(250)
+            .lean();
+
+        const games = await enrichGamesWithNames(changedGames);
+        const nextCursor = changedGames.length > 0
+            ? cursorForGames(changedGames, decodedCursor.date)
+            : req.query.since;
+
+        return res.send({ games, nextCursor });
+    } catch (err) {
+        return res.status(400).send({
+            error: 'Error getting changed games'
+        });
+    }
 });
 
 /**

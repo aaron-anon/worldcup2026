@@ -76,7 +76,8 @@ async function importMatches() {
                 away_team_label: item.away_team_label || "",
                 homeTeam: homeTeamId || null,
                 visitingTeam: awayTeamId || null,
-                date: new Date(item.local_date)
+                date: new Date(item.local_date),
+                updated_at: new Date()
             };
             
             await Game.create(gameData);
