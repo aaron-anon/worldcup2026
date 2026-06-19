@@ -31,6 +31,25 @@ const FIELD_PATHS = {
   awayTeamLabel: process.env.LIVE_SCORE_FIELD_AWAY_TEAM_LABEL || 'away_team_label'
 };
 
+const STADIUM_UTC_OFFSETS = {
+  '1': -6,
+  '2': -6,
+  '3': -6,
+  '4': -5,
+  '5': -5,
+  '6': -5,
+  '7': -4,
+  '8': -4,
+  '9': -4,
+  '10': -4,
+  '11': -4,
+  '12': -4,
+  '13': -7,
+  '14': -7,
+  '15': -7,
+  '16': -7
+};
+
 if (!MONGO_URL) {
   console.error('MONGODB_URL environment variable is required');
   process.exit(1);
@@ -60,6 +79,47 @@ function log(message) {
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function parseKickoffUTC(game) {
+  if (!game?.local_date) {
+    return null;
+  }
+
+  const match = String(game.local_date).match(/^(\d{2})\/(\d{2})\/(\d{4}) (\d{2}):(\d{2})$/);
+  if (!match) {
+    return null;
+  }
+
+  const [, month, day, year, hour, minute] = match;
+  const utcOffsetHours = STADIUM_UTC_OFFSETS[String(game.stadium_id)] ?? 0;
+
+  return new Date(Date.UTC(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+    Number(hour) - utcOffsetHours,
+    Number(minute)
+  ));
+}
+
+function isRelevantForSync(game, nowMs) {
+  const kickoff = parseKickoffUTC(game);
+  if (!kickoff) return false;
+
+  const kickoffMs = kickoff.getTime();
+  return nowMs >= kickoffMs - PRE_MATCH_WINDOW_MS
+    && nowMs <= kickoffMs + POST_MATCH_WINDOW_MS;
+}
+
+function localDateKey(game) {
+  const match = String(game?.local_date || '').match(/^(\d{2})\/(\d{2})\/(\d{4}) /);
+  if (!match) {
+    return undefined;
+  }
+
+  const [, month, day, year] = match;
+  return `${year}-${month}-${day}`;
 }
 
 function getByPath(source, path) {
@@ -195,7 +255,7 @@ function buildProviderRequestConfig(relevantGames) {
   const params = { ...STATIC_QUERY };
 
   if (DATE_QUERY_PARAM) {
-    const uniqueDates = [...new Set(relevantGames.map(game => game.date.toISOString().slice(0, 10)))];
+    const uniqueDates = [...new Set(relevantGames.map(localDateKey).filter(Boolean))];
 
     if (uniqueDates.length > 0) {
       if (DATE_QUERY_MODE === 'repeat') {
@@ -262,11 +322,13 @@ function buildGameUpdate(existingGame, providerMatch) {
 }
 
 function getIdleDelayMs(nextGame) {
-  if (!nextGame?.date) {
+  const kickoff = nextGame?.kickoffUTC || parseKickoffUTC(nextGame);
+
+  if (!kickoff) {
     return MAX_IDLE_SLEEP_MS;
   }
 
-  const nextUsefulWindow = new Date(nextGame.date).getTime() - PRE_MATCH_WINDOW_MS;
+  const nextUsefulWindow = kickoff.getTime() - PRE_MATCH_WINDOW_MS;
   const delay = nextUsefulWindow - Date.now();
 
   if (delay <= 0) {
@@ -292,14 +354,8 @@ async function syncRelevantGames() {
   const coll = db.collection('games');
   const now = Date.now();
 
-  const relevantGames = await coll.find(
-    {
-      finished: { $ne: 'TRUE' },
-      date: {
-        $gte: new Date(now - POST_MATCH_WINDOW_MS),
-        $lte: new Date(now + PRE_MATCH_WINDOW_MS)
-      }
-    },
+  const unfinishedGames = await coll.find(
+    { finished: { $ne: 'TRUE' } },
     {
       projection: {
         id: 1,
@@ -313,21 +369,18 @@ async function syncRelevantGames() {
         away_team_id: 1,
         home_team_label: 1,
         away_team_label: 1,
-        date: 1
+        local_date: 1,
+        stadium_id: 1
       }
     }
   ).toArray();
 
-  const nextUpcomingGame = await coll.findOne(
-    {
-      finished: { $ne: 'TRUE' },
-      date: { $gt: new Date(now) }
-    },
-    {
-      projection: { date: 1 },
-      sort: { date: 1 }
-    }
-  );
+  const relevantGames = unfinishedGames.filter(game => isRelevantForSync(game, now));
+
+  const nextUpcomingGame = unfinishedGames
+    .map(game => ({ ...game, kickoffUTC: parseKickoffUTC(game) }))
+    .filter(game => game.kickoffUTC && game.kickoffUTC.getTime() > now)
+    .sort((a, b) => a.kickoffUTC.getTime() - b.kickoffUTC.getTime())[0];
 
   if (relevantGames.length === 0) {
     const sleepMs = getIdleDelayMs(nextUpcomingGame);
